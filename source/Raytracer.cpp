@@ -83,8 +83,6 @@ Raytracer::Raytracer()
 	mObjects.push_back({ {50,0,-120}, 20, mat, null_rot , SPHERE});
 	mat.reflexion = 0;
 	mat.refraction = 0;
-	mObjects.push_back({ {250,0,25}, 500, mat, {0, 3.14 / 2, 0, 1}, (cl_int)PLAN });
-	mObjects.push_back({ {-250,0,25}, 500, mat, {0, 3.14 / 2, 0, 1}, (cl_int)PLAN });
 	mObjects.push_back({ {-50,0,25}, 500, mat, {3.14/2,0,0,1}, (cl_int)PLAN });
 	mat.refraction = 1.5;
 	mat.reflexion = 0.6;
@@ -198,9 +196,9 @@ bool	Raytracer::init()
 		CL_WGL_HDC_KHR,     (cl_context_properties) getCurrentGLDrawable(),
 		0
 	};
-	
+
 	size_t bytes = 0;
-	// Notice that extension functions are accessed via pointers 
+	// Notice that extension functions are accessed via pointers
 	// initialized with clGetExtensionFunctionAddressForPlatform.
 
 	// queuring how much bytes we need to read
@@ -219,8 +217,8 @@ bool	Raytracer::init()
 //	for (size_t i = 0; i < devNum; i++)
 //	{
 		//enumerating the devices for the type, names, CL_DEVICE_EXTENSIONS, etc
-		//clGetDeviceInfo(devs[i], CL_DEVICE_TYPE, …);
-		//clGetDeviceInfo(devs[i], CL_DEVICE_EXTENSIONS, …);
+		//clGetDeviceInfo(devs[i], CL_DEVICE_TYPE, â€¦);
+		//clGetDeviceInfo(devs[i], CL_DEVICE_EXTENSIONS, â€¦);
 
 		//size_t valueSize;
 		//clGetDeviceInfo(devs[device_id_index], CL_DEVICE_NAME, 0, NULL, &valueSize);
@@ -229,7 +227,7 @@ bool	Raytracer::init()
 		//std::cout << "[OpenCL] Interop OpenGL compatible device name : " << value << "\n";
 
 	//}
-	
+
 
 	/*Step 2:Query the platform and choose the first GPU device if has one.Otherwise use the CPU as device.*/
 	cl_uint numDevices = 0;
@@ -332,7 +330,7 @@ bool	Raytracer::init()
 	status = clSetKernelArg(mKernelDrawScene, 4, sizeof(cl_int), (void *)&size); // 4th parameter : int nb_objects
 	if (status != CL_SUCCESS)
 		std::cout << "Error setarg nb_objects" << getErrorString(status) << "\n";
-	
+
 	// copy scene to gpu
 	status = clEnqueueWriteBuffer(mCommandQueue, mPrimitivesBuffer, CL_TRUE, 0, sizeof(Object) * mObjects.size(), mObjects.data(), 0, NULL, NULL);
 	if (status != CL_SUCCESS)
@@ -368,7 +366,7 @@ void Raytracer::redraw()
 	size_t global_work_size[1] = { mSizeX * mSizeY };
 	cl_event event;
 	int status;
-	
+
 	// Generate rays
 	glm::vec4 tmp(mDirection, 1);
 	status = clSetKernelArg(mKernelGenerateDirections, 1, sizeof(cl_float) * 4, (void *)&tmp);
@@ -470,7 +468,7 @@ void Raytracer::setDirection(const glm::vec3 & rot)
 		if (info != CL_COMPLETE)
 			return;
 	}
-	
+
 
 	size_t info;
 	clGetEventInfo(*event, CL_EVENT_COMMAND_EXECUTION_STATUS, sizeof(size_t), &info, NULL);
