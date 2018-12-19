@@ -1,11 +1,13 @@
-#define MAX_RECURSION 16
+#define PI  3.14159265359f
+
+#define MAX_RECURSION 5
 #define SIZEX (1290)
 #define SIZEY (720)
 
 #define DEFAULT_COLOR (float3)(0.1,0.1,0.1)
 
 #define GET_Y(id) (id/SIZEX)
-//#define DEBUG(id) (GET_Y(id) == SIZEY/2 && id-GET_Y(id)*SIZEX == SIZEX/2 ? 1 : 0)
+#define DEBUG(id) (GET_Y(id) == SIZEY/2 && id-GET_Y(id)*SIZEX == SIZEX/2 ? 1 : 0)
 #define DEBUG(id) 0
 #define PRINT_VECTOR(name,vector) (printf("%s: %f %f %f", name, vector.x, vector.y, vector.z))
 
@@ -35,6 +37,24 @@ typedef struct s_Ray {
 	float3 	position;
 	float3 	color;
 }				Ray;
+
+static float get_random(unsigned int *seed0, unsigned int *seed1) {
+
+	/* hash the seeds using bitwise AND operations and bitshifts */
+	*seed0 = 36969 * ((*seed0) & 65535) + ((*seed0) >> 16);
+	*seed1 = 18000 * ((*seed1) & 65535) + ((*seed1) >> 16);
+
+	unsigned int ires = ((*seed0) << 16) + (*seed1);
+
+	/* use union struct to convert int to float */
+	union {
+		float f;
+		unsigned int ui;
+	} res;
+
+	res.ui = (ires & 0x007fffff) | 0x40000000;  /* bitwise AND, bitwise OR */
+	return (res.f - 2.0f) / 2.0f;
+}
 
 float3 reflect(float3 incident, float3 normal)
 {
@@ -166,10 +186,6 @@ float3 compute_normal(Ray *ray, __global Object *object, int time)
 	}
 	else if (object->type == PLAN) {
 		normal = (float3)(0,1,0);
-		normal.x = cos(ray->position.x/16 + time/300.f) / 20;
-		normal.z = cos(ray->position.z/16 + time/300.f) / 20;
-		//normal.xz += (float2)(cos(ray->position.x + time/300.f) / 20, cos(ray->position.z + time/300.f) / 20);
-		normal = normalize(normal);
 	}
 	else if (object->type == CYLINDER) {
 		normal = ray->position - object->position;
@@ -193,13 +209,15 @@ float3 compute_normal(Ray *ray, __global Object *object, int time)
 	return normal;
 }
 
-void cast_ray(Ray *rays, __global Object *objects, int nb_objects, int loop, int time)
+void cast_ray(float3 *color, float3 *color_mask, Ray *rays, __global Object *objects, int nb_objects, int loop, int time, unsigned int *seed0, unsigned int *seed1)
 {
 	Ray *ray = &rays[loop];
 	__global Object *obj = 0;
 
 	// ray->color = normalize((float3)(0.1,0.1,clamp(ray->direction.y,0.3f,1.f)))-0.5;
 	ray->color = DEFAULT_COLOR;
+	ray->distance = -1;
+	ray->id_object = -1;
 
 	if (DEBUG(get_global_id(0))) {
 		printf("Ray %d", loop);
@@ -231,12 +249,19 @@ void cast_ray(Ray *rays, __global Object *objects, int nb_objects, int loop, int
 
 	}
 
-	if (ray->distance < 0)
+	if (ray->distance < 0) {
+		*color = *color_mask * DEFAULT_COLOR;
 		return;
+	}
 
 	obj = &objects[ray->id_object];
 	ray->position = ray->distance * ray->direction + ray->origin;
 	float3 normal = compute_normal(ray, obj, time);
+
+
+	float rand1 = 2.0f * PI * get_random(seed0, seed1);
+	float rand2 = get_random(seed0, seed1);
+	float rand2s = sqrt(rand2);
 
 	if (DEBUG(get_global_id(0))) {
 		printf("\tType touched: %d", obj->type);
@@ -244,78 +269,34 @@ void cast_ray(Ray *rays, __global Object *objects, int nb_objects, int loop, int
 		printf("\tmat: r=%f tr=%f", obj->mat.reflexion, obj->mat.refraction);
 		PRINT_VECTOR("\tnormal", normal);
 		PRINT_VECTOR("\tposition", ray->position);
+		PRINT_VECTOR("\tmat color", objects[ray->id_object].mat.color.xyz);
+	}
+	/* create a local orthogonal coordinate frame centered at the hitpoint */
+	float3 w = normal;
+	float3 axis = fabs(w.x) > 0.1f ? (float3)(0.0f, 1.0f, 0.0f) : (float3)(1.0f, 0.0f, 0.0f);
+	float3 u = normalize(cross(axis, w));
+	float3 v = cross(w, u);
+
+	float3 emission = (float3)(0);
+	if (ray->id_object == 1)
+		emission = (float3)(1);
+	*color = *color + *color_mask * emission;
+	*color_mask = *color_mask * objects[ray->id_object].mat.color.xyz;
+	//*color_mask = *color_mask * dot(ray->direction, normal);
+
+	//*color = objects[ray->id_object].mat.color.xyz;
+	//*color = objects[ray->id_object].mat.color.xyz;
+	// *color = (float3)(objects[0].mat.color.x);
+
+	if (loop+1 != MAX_RECURSION && ray->distance > 0) {
+		/* use the coordinte frame and random numbers to compute the next ray direction */
+		rays[loop+1].direction = normalize(u * cos(rand1)*rand2s + v*sin(rand1)*rand2s + w*sqrt(1.0f - rand2));
+		// rays[loop+1].direction = reflect(ray->direction, normal);
+		rays[loop+1].origin = ray->position + normal * 0.01f;
+
+		cast_ray(color, color_mask, rays, objects, nb_objects, loop+1, time, seed0, seed1);
 	}
 
-	float3 light = (float3)(0,60,-160);
-	float3 light_vector = normalize(light - ray->position);
-	float angle = dot(light_vector, normal);
-	float3 diffuse = (float3) obj->mat.color.xyz * angle;
-	//ray->color = (float3) obj->mat.color.xyz;
-
-	////////////////
-	// refraction
-	if (obj->mat.refraction > 0. && loop+1<MAX_RECURSION) {
-		float n1 = 1;
-		float n2 = 1.5;
-		if (loop > 0 && rays[loop-1].id_object == ray->id_object) {
-			n1 = 1.5;
-			n2 = 1;
-		}
-
-		rays[loop+1].origin = ray->position - normal  * 0.1;
-		rays[loop+1].direction = refract(ray->direction, normal, n1/n2);
-		rays[loop+1].distance = -1;
-		if (DEBUG(get_global_id(0)))
-			printf("--- transmitted ray ---");
-		cast_ray(rays, objects, nb_objects, loop+1, time);
-
-		float3 transmitted = rays[loop+1].color;
-
-		float kr = 0;
-		if (loop == 0 || (loop >= 0 && rays[loop-1].id_object != ray->id_object))
-			fresnel(ray->direction, normal, n1, n2, &kr);
-		//kr=0;
-		rays[loop+1].origin = ray->position + normal * 0.1;
-		rays[loop+1].direction = reflect(ray->direction, normal);
-		rays[loop+1].distance = -1;
-		if (kr > 0) {
-			if (DEBUG(get_global_id(0)))
-				printf("--- reflected ray ---");
-			cast_ray(rays, objects, nb_objects, loop+1, time);
-		}
-		float3 reflected = rays[loop+1].color;
-		if (DEBUG(get_global_id(0))){
-			printf("kr=%f",kr);
-			PRINT_VECTOR("tr", transmitted);
-			PRINT_VECTOR("re", reflected);
-		}
-		ray->color = reflected * kr + transmitted * (1.f-kr);
-	}
-	else if (obj->mat.reflexion > 0 && loop+1<MAX_RECURSION) {
-		if (DEBUG(get_global_id(0)))
-			printf("--- reflected ray ---");
-		rays[loop+1].origin = ray->position + normal * 0.1;
-		rays[loop+1].direction = reflect(ray->direction, normal);
-		rays[loop+1].distance = -1;
-		cast_ray(rays, objects, nb_objects, loop+1, time);
-		if (rays[loop+1].distance > 0)
-			ray->color = rays[loop+1].color * obj->mat.reflexion;
-		ray->color += diffuse * (1-obj->mat.reflexion);
-	}
-	else {
-		if (obj->type == PLAN && ray->id_object == 3) {
-			int step = 20;
-			if (fmod(fabs(ray->position.x), step) < step/2.f)
-				if (fmod(fabs(ray->position.y), step) < step/2.f)
-					diffuse = (normalize(ray->position) + 1)/2;
-		}
-		ray->color = diffuse;
-	}
-
-	// specular
-	float3 reflect_light = reflect(-light_vector, normal);
-	angle = clamp(pow(dot(reflect_light, -ray->direction), 8),0.f,1.f);
-	ray->color += (float3)(1) * angle;
 }
 
 __kernel void generate_rays_directions(__global float *output, float3 rotation, float image_scale, float image_ratio) {
@@ -339,27 +320,41 @@ __kernel void draw_scene(__write_only image2d_t output, float3 origin, __global 
 	int id = get_global_id(0);
 	int id3 = id*3;
 	int id4 = id*4;
+	int y = id / SIZEX;
+	int x = id - y * SIZEX;
 
 	Ray rays[MAX_RECURSION];
 
 	if(DEBUG(id))
 		printf("\n");
 
-	rays->origin = origin;rays->origin.x += 10;
+	rays->origin = origin;rays->origin.z -= 50;
 	rays->distance = -1;
 	rays->direction.x = directions[id4];
 	rays->direction.y = directions[id4+1];
 	rays->direction.z = directions[id4+2];
 
-	//cast_ray(rays, objects, nb_objects, 0);
-	cast_ray(rays, objects, nb_objects, 0, time);
+	unsigned int seed0 = x;
+	unsigned int seed1 = y;
 
-	int y = id / SIZEX;
-	int x = id - y * SIZEX;
-	write_imagef(output, (int2)(x,y), (float4)(rays->color,1));
+	float3 final = (float3)(0);
+
+	time = 0;
+
+	float sample = 40;
+	for (int i = 0 ; i < sample ; i++) {
+		float3 color = (float3)(0);;
+		float3 mask = (float3)(1);
+		cast_ray(&color, &mask, rays, objects, nb_objects, 0, time, &seed0, &seed1);
+		if (DEBUG(id))
+			PRINT_VECTOR("color intermediaire", final);
+		final += clamp(color * (1.f/sample), 0,1);
+	}
+
+	write_imagef(output, (int2)(x,y), (float4)(final,1));
 	if (DEBUG(id)) {
 		write_imagef(output, (int2)(x,y), (float4)(1,0,0,1));
-		PRINT_VECTOR("color", rays->color);
+		 PRINT_VECTOR("color final", final);
 	}
 	// write_imagef(output, (int2)(x,y), (float4)(rays->origin,1));
 }
