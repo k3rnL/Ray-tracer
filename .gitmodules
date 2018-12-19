@@ -1,0 +1,3 @@
+[submodule "MyEngine"]
+	path = MyEngine
+	url = https://github.com/k3rnL/MyEngine
